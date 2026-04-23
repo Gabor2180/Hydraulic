@@ -32,6 +32,10 @@ public class HydraulicFabricBootstrap implements HydraulicBootstrap {
             .filter(Predicate.not(this::ignoreMod))
             .filter(mod -> mod.getMetadata().getEnvironment().matches(EnvType.CLIENT))
             .filter(mod -> mod.getOrigin().getKind() != ModOrigin.Kind.NESTED) // Nested jars are handled in resolveJiJ below
+            .filter(mod -> mod.getOrigin().getKind() == ModOrigin.Kind.PATH
+                && mod.getOrigin().getPaths().stream()
+                    .map(Path::getFileName)
+                    .anyMatch(name -> name != null && name.toString().startsWith("hydraulic-")))
             .<ModInfo>mapMulti((mod, output) -> FabricUtil.resolveJiJ(mod.getRootPaths(), output))
             .collect(Collectors.toUnmodifiableMap(ModInfo::id, Function.identity(), this::maxByVersion))
     );
