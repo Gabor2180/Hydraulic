@@ -35,7 +35,7 @@ public class HydraulicFabricBootstrap implements HydraulicBootstrap {
             .filter(mod -> mod.getOrigin().getKind() == ModOrigin.Kind.PATH
                 && mod.getOrigin().getPaths().stream()
                     .map(Path::getFileName)
-                    .anyMatch(name -> name != null && name.toString().startsWith("hydraulic-")))
+                    .anyMatch(name -> name != null && !name.toString().startsWith("hydraulic-")))
             .<ModInfo>mapMulti((mod, output) -> FabricUtil.resolveJiJ(mod.getRootPaths(), output))
             .collect(Collectors.toUnmodifiableMap(ModInfo::id, Function.identity(), this::maxByVersion))
     );
