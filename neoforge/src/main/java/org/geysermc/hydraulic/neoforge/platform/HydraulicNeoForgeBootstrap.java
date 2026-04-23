@@ -27,6 +27,10 @@ public class HydraulicNeoForgeBootstrap implements HydraulicBootstrap {
         ModList.get()
             .getMods()
             .stream()
+            .filter(mod -> {
+                final Path fileNamePath = mod.getOwningFile().getFile().getFilePath().getFileName();
+                return fileNamePath != null && fileNamePath.toString().startsWith("hydraulic-");
+            })
             .map(mod -> {
                 final Path modPath = mod.getOwningFile().getFile().getFilePath();
                 return new ModInfo(
