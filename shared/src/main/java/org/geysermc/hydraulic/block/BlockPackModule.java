@@ -75,6 +75,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
 
     private final Map<String, StateDefinition> blockStates = new HashMap<>();
     private final Set<String> emptyModels = new HashSet<>();
+    private ModelStitcher.Provider modelProvider;
 
     public BlockPackModule() {
         this.listenOn(GeyserDefineCustomBlocksEvent.class, this::onDefineCustomBlocks);
@@ -84,6 +85,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
     }
 
     private void preProcess(@NotNull PackPreProcessContext<BlockPackModule> context) {
+        this.modelProvider = context.modelProvider();
         for (var blockState : context.assets(ResourcePack::blockStates)) {
             this.blockStates.put(blockState.key().toString(), new StateDefinition(blockState, context.modelProvider()));
         }
@@ -135,7 +137,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                 Key key = model.key();
 
                 // Skip unit cube models
-                if (isUnitCube(model.parent())) {
+                if (isUnitCube(model)) {
                     continue;
                 }
 
@@ -218,10 +220,13 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                 Model model = definition.model();
                 Key key = model.key();
 
+                // BER-rendered blocks (e.g. signs) have no geometry; rotating geometry.hydraulic.empty
+                // causes Bedrock's axis-overflow error, so suppress the transformation for those states.
+                boolean isEmptyModelState = emptyModels.contains(key.toString());
                 CustomBlockComponents.Builder componentsBuilder = CustomBlockComponents.builder()
                         .transformation(new TransformationComponent(
-                            (360 - definition.variant().x()) % 360, // Rotation X
-                            (360 - definition.variant().y()) % 360, // Rotation Y
+                            isEmptyModelState ? 0 : (360 - definition.variant().x()) % 360, // Rotation X
+                            isEmptyModelState ? 0 : (360 - definition.variant().y()) % 360, // Rotation Y
                             0, // Rotation Z
                             1, // Scale X
                             1, // Scale Y
@@ -231,7 +236,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                             0 // Translation Z
                         ));
 
-                if (!isUnitCube(model.parent())) {
+                if (!isUnitCube(model)) {
                     String namespace = key.namespace();
                     String value = key.value();
 
@@ -258,6 +263,11 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                     componentsBuilder.geometry(GeometryComponent.builder()
                             .identifier("minecraft:geometry.full_block")
                             .build());
+                    // Unit-cube blocks still need their selection/collision box from the block state
+                    VoxelShape unitShape = state.getShape(new SingletonBlockGetter(state), BlockPos.ZERO);
+                    VoxelShape unitCollisionShape = state.getCollisionShape(new SingletonBlockGetter(state), BlockPos.ZERO);
+                    componentsBuilder.selectionBox(createBoxComponent(unitShape));
+                    componentsBuilder.collisionBox(createBoxComponent(unitCollisionShape));
                 }
 
                 // TODO: Work this out based on block state/texture? as this isn't perfect
@@ -284,7 +294,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                             .ambientOcclusion(model.ambientOcclusion())
                             .build());
 
-                    Map<String, String> faceMapping = getFaceMapping(model.parent());
+                    Map<String, String> faceMapping = getFaceMapping(model);
                     if (!faceMapping.isEmpty()) {
                         for (Map.Entry<String, String> face : faceMapping.entrySet()) {
                             if (!material.textures().containsKey(face.getValue())) continue;
@@ -301,6 +311,13 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                     } else {
                         for (Map.Entry<String, String> entry : material.textures().entrySet()) {
                             String materialKey = entry.getKey();
+
+                            // Bedrock cannot render a transparent overlay face on top of a solid face
+                            // (the Java grass_block / grass_block-derived model trick). Skip the key
+                            // entirely so only the base side texture is applied.
+                            if ("overlay".equals(materialKey)) {
+                                continue;
+                            }
 
                             // Bedrock uses "*" for the particle texture
                             if ("particle".equals(materialKey)) {
@@ -584,37 +601,114 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
         return textures;
     }
 
-    private boolean isUnitCube(Key parent) {
+    /**
+     * Returns {@code true} when {@code model} should be rendered using
+     * {@code minecraft:geometry.full_block} on Bedrock rather than a converted
+     * custom geometry file.
+     *
+     * <p>The check follows the model's parent chain (up to a fixed depth) so
+     * that models which inherit from a cube-type without defining their own
+     * elements – such as {@code mushroom_block_inside} (parent: {@code cube_all})
+     * or {@code overgrown_stone} (parent: {@code grass_block}) – are correctly
+     * identified as unit cubes.</p>
+     */
+    private boolean isUnitCube(@NotNull Model model) {
+        return isUnitCube(model, 0);
+    }
+
+    private boolean isUnitCube(@NotNull Model model, int depth) {
+        if (depth > 10) {
+            return false;
+        }
+        Key parent = model.parent();
         if (parent == null) {
             return false;
         }
-        return parent.namespace().equals("minecraft") && (parent.value().startsWith("block/cube") || parent.value().startsWith("block/orientable"));
+        if ("minecraft".equals(parent.namespace())) {
+            if (parent.value().startsWith("block/cube") || parent.value().startsWith("block/orientable")) {
+                return true;
+            }
+            // grass_block is a full cube that uses a layered overlay side texture which
+            // Bedrock cannot replicate. Treat it (and any model that inherits from it
+            // without custom elements) as a unit cube so face textures can be mapped directly.
+            if ("block/grass_block".equals(parent.value())) {
+                return true;
+            }
+        }
+        // If the model defines its own elements it overrides the parent geometry –
+        // don't propagate the unit-cube check through models with custom elements.
+        if (!model.elements().isEmpty()) {
+            return false;
+        }
+        // Model has no elements of its own; it inherits the parent's shape.
+        // Follow the parent chain to see if the root geometry is a unit cube.
+        if (this.modelProvider != null) {
+            Model parentModel = this.modelProvider.model(parent);
+            if (parentModel != null) {
+                return isUnitCube(parentModel, depth + 1);
+            }
+        }
+        return false;
     }
 
     /**
-     * Get the face mapping for the given parent model.
-     * This is due to some cube models having texture names bedrock doesn't understand.
+     * Get the face mapping for the given model.
      *
-     * @param parent The parent model
-     * @return The face mapping if any
+     * <p>This resolves the <em>effective</em> root parent by walking the model's
+     * parent chain (ignoring intermediate models that contribute no elements of
+     * their own). This means the correct mapping is returned even when a mod
+     * inserts an intermediate base model between its block model and a vanilla
+     * cube-type parent (e.g. {@code mymod:block/base} → {@code minecraft:block/grass_block}).</p>
+     *
+     * @param model The model whose face mapping should be determined
+     * @return The face mapping, or an empty map if none applies
      */
-    private Map<String, String> getFaceMapping(Key parent) {
-        // Destination <- Source
-        Map<String, String> mapping = new HashMap<>();
-//        {{
-//            put("*", "particle");
-//            put("up", "up");
-//            put("down", "down");
-//            put("north", "north");
-//            put("south", "south");
-//            put("west", "west");
-//            put("east", "east");
-//        }};
+    private Map<String, String> getFaceMapping(@Nullable Model model) {
+        return getFaceMapping(model, 0);
+    }
 
-        // No parent, so return empty
+    private Map<String, String> getFaceMapping(@Nullable Model model, int depth) {
+        Map<String, String> mapping = new HashMap<>();
+
+        if (model == null || depth > 10) {
+            return mapping;
+        }
+
+        Key parent = model.parent();
         if (parent == null) {
             return mapping;
         }
+
+        // Try to resolve the mapping for the immediate parent first.
+        Map<String, String> direct = getFaceMappingForKey(parent);
+        if (!direct.isEmpty()) {
+            return direct;
+        }
+
+        // The immediate parent has no recognised mapping.
+        // If this model has its own elements it overrides the parent geometry,
+        // so there is nothing further to walk.
+        if (!model.elements().isEmpty()) {
+            return mapping;
+        }
+
+        // Follow the parent chain.
+        if (this.modelProvider != null) {
+            Model parentModel = this.modelProvider.model(parent);
+            if (parentModel != null) {
+                return getFaceMapping(parentModel, depth + 1);
+            }
+        }
+
+        return mapping;
+    }
+
+    /**
+     * Returns the face mapping for a single, directly-known vanilla parent key,
+     * or an empty map when the key is not recognised.
+     */
+    private static Map<String, String> getFaceMappingForKey(@NotNull Key parent) {
+        Map<String, String> mapping = new HashMap<>();
 
         if ("block/cube_all".equals(parent.value())) {
             mapping.put("*", "all");
@@ -630,6 +724,18 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
             mapping.put("*", "side");
             mapping.put("up", "end");
             mapping.put("down", "end");
+            mapping.put("north", "side");
+            mapping.put("south", "side");
+            mapping.put("west", "side");
+            mapping.put("east", "side");
+        } else if ("block/grass_block".equals(parent.value())
+                || "block/template_grass_block".equals(parent.value())) {
+            // grass_block / template_grass_block use a layered overlay side texture that
+            // Bedrock cannot replicate. Map all side faces to the base "side" texture;
+            // the "overlay" key is intentionally omitted so it is never applied.
+            mapping.put("*", "side");
+            mapping.put("up", "top");
+            mapping.put("down", "bottom");
             mapping.put("north", "side");
             mapping.put("south", "side");
             mapping.put("west", "side");
