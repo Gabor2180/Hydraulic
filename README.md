@@ -1,5 +1,5 @@
 ## Making bugfixes
-I'm making bugfixes that annoy me, I only have basic java skills, so i also use AI to help with the work.
+I'm making bugfixes that annoy me, I only have basic java skills, so I also use AI to help with the work.
 ### Major bugfixes:
 - Hyraulic only converts mods that DO NOT have the "hydraulic-" prefix
 - Making overlays show correctly
