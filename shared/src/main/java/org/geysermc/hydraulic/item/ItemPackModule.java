@@ -121,6 +121,19 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 continue;
             }
 
+            // Item has layer textures (item/generated or item/handheld style) → treat as 2D icon.
+            // This path handles mods that use the old models/item/ format instead of items/.
+            if (!itemsWith2dIcon.contains(itemLocation)) {
+                itemsWith2dIcon.add(itemLocation);
+            }
+
+            // Direct parent check for handheld items (e.g. swords, tools).
+            Key parentKey = baseModel.parent();
+            if (parentKey != null && "item/handheld".equals(parentKey.value())
+                    && !handheldItems.contains(itemLocation)) {
+                handheldItems.add(itemLocation);
+            }
+
             Key layer0 = layers.getFirst().key();
 
             if (layer0 != null && layer0.namespace().equals(Key.MINECRAFT_NAMESPACE)) {

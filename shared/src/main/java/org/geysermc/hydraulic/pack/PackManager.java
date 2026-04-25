@@ -269,7 +269,11 @@ public class PackManager {
             }
 
             for (final ModInfo mod : namespacesToMods.get(itemId.getNamespace())) {
-                final Path checkFile = mod.resolveFile("assets/" + itemModel.getNamespace() + "/items/" + itemModel.getPath() + ".json");
+                // Check the 1.21.4+ items/ format first, then fall back to the older models/item/ format
+                Path checkFile = mod.resolveFile("assets/" + itemModel.getNamespace() + "/items/" + itemModel.getPath() + ".json");
+                if (checkFile == null) {
+                    checkFile = mod.resolveFile("assets/" + itemModel.getNamespace() + "/models/item/" + itemModel.getPath() + ".json");
+                }
                 if (checkFile != null) {
                     modsToItems.put(mod.id(), itemId);
                     break;
