@@ -285,7 +285,17 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                     // Add a default texture, can be replaced by the below (I think)
                     Map.Entry<String, String> firstEntry = material.textures().entrySet().iterator().next();
 
-                    String name = PackUtil.getTextureName(firstEntry.getValue());
+                    Map<String, String> faceMapping = getFaceMapping(model);
+
+                    // If the face mapping specifies a "*" key, use that texture for the default material instance
+                    // to avoid HashMap non-deterministic ordering producing the wrong default texture.
+                    String defaultTextureKey = faceMapping.get("*");
+                    String name;
+                    if (defaultTextureKey != null && material.textures().containsKey(defaultTextureKey)) {
+                        name = PackUtil.getTextureName(material.textures().get(defaultTextureKey));
+                    } else {
+                        name = PackUtil.getTextureName(firstEntry.getValue());
+                    }
 
                     componentsBuilder.materialInstance("*", MaterialInstance.builder()
                             .texture(name)
@@ -294,9 +304,9 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                             .ambientOcclusion(model.ambientOcclusion())
                             .build());
 
-                    Map<String, String> faceMapping = getFaceMapping(model);
                     if (!faceMapping.isEmpty()) {
                         for (Map.Entry<String, String> face : faceMapping.entrySet()) {
+                            if (face.getKey().equals("*")) continue; // Already handled above
                             if (!material.textures().containsKey(face.getValue())) continue;
 
                             String textureName = PackUtil.getTextureName(material.textures().get(face.getValue()));
@@ -733,6 +743,15 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
             // grass_block / template_grass_block use a layered overlay side texture that
             // Bedrock cannot replicate. Map all side faces to the base "side" texture;
             // the "overlay" key is intentionally omitted so it is never applied.
+            mapping.put("*", "side");
+            mapping.put("up", "top");
+            mapping.put("down", "bottom");
+            mapping.put("north", "side");
+            mapping.put("south", "side");
+            mapping.put("west", "side");
+            mapping.put("east", "side");
+        } else if ("block/dirt_path".equals(parent.value())) {
+            // dirt_path (and mods that extend it, e.g. sandy_dirt_path) use top/side/bottom faces.
             mapping.put("*", "side");
             mapping.put("up", "top");
             mapping.put("down", "bottom");
