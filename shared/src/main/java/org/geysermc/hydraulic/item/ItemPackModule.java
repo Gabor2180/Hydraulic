@@ -39,6 +39,7 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
     private final List<Identifier> itemsWith2dIcon = new ArrayList<>();
     private final List<Identifier> handheldItems = new ArrayList<>();
     private final Map<String, String> itemBuiltinTexture = new HashMap<>();
+    private final List<Identifier> blockItemsWithFallbackIcon = new ArrayList<>();
 
     public ItemPackModule() {
         this.listenOn(GeyserDefineCustomItemsEvent.class, this::onDefineCustomItems);
@@ -153,6 +154,33 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                 // Don't warn if a block as they can use the block model
                 if (!(item instanceof BlockItem)) {
                     context.logger().warn("Item {} has no layer0 texture, skipping", itemLocation);
+                } else {
+                    // For block items with no layer0, derive icon from the first block model texture variable
+                    Map<String, ModelTexture> variables = model.textures().variables();
+                    if (variables != null && !variables.isEmpty()) {
+                        // Prefer common full-block texture slots; fall back to any resolved texture
+                        ModelTexture resolved = null;
+                        for (String preferred : List.of("all", "side", "top", "front", "texture")) {
+                            ModelTexture t = variables.get(preferred);
+                            if (t != null && t.key() != null) {
+                                resolved = t;
+                                break;
+                            }
+                        }
+                        if (resolved == null) {
+                            for (ModelTexture t : variables.values()) {
+                                if (t != null && t.key() != null) {
+                                    resolved = t;
+                                    break;
+                                }
+                            }
+                        }
+                        if (resolved != null) {
+                            String outputLoc = getOutputFromModel(context, resolved.key());
+                            bedrockPack.addItemTexture(itemLocation.toString(), outputLoc.replace(".png", ""));
+                            blockItemsWithFallbackIcon.add(itemLocation);
+                        }
+                    }
                 }
 
                 continue;
@@ -251,6 +279,12 @@ public class ItemPackModule extends TexturePackModule<ItemPackModule> {
                     );
 
                     CreativeMappings.setupBlock(block, customItemOptions);
+
+                    // If this block item has a fallback icon registered (derived from the block model),
+                    // set it here so Bedrock shows the correct texture instead of a "?" placeholder
+                    if (!is2d && blockItemsWithFallbackIcon.contains(itemLocation)) {
+                        customItemOptions.icon(itemLocation.toString());
+                    }
                 }
 
                 customItemDefinition.bedrockOptions(customItemOptions);
