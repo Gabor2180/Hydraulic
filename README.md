@@ -1,3 +1,10 @@
+## Making bugfixes
+I'm making bugfixes that annoy me, I only have basic java skills, so i also use AI to help with the work.
+### Major bugfixes:
+- Hyraulic only converts mods that DO NOT have the "hydraulic-" prefix
+- Making overlays show correctly
+- More minor, or not yet mentioned fixes
+
 # Hydraulic
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
